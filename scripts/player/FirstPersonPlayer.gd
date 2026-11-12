@@ -23,6 +23,11 @@ var left_arm_mesh: Node3D
 var right_arm_mesh: Node3D
 var suit_pivot: Node3D
 var suit_meshes: Array[MeshInstance3D] = []
+var suit_anim_player: AnimationPlayer = null
+var walk_anim_name: String = ""
+var jump_anim_name: String = ""
+var run_jump_anim_name: String = ""
+var was_on_floor: bool = true
 var third_person: bool = false
 
 var held_item: PickupItem3D = null
@@ -83,7 +88,7 @@ func _build_spacesuit_model() -> void:
 	add_child(suit_pivot)
 
 	var suit_scene_node: Node3D = null
-	var glb_path: String = "res://assets/models/mark_iii_spacesuit.glb"
+	var glb_path: String = "res://assets/models/robonaut_player.glb"
 	if ResourceLoader.exists(glb_path):
 		var packed := load(glb_path) as PackedScene
 		if packed:
@@ -99,22 +104,54 @@ func _build_spacesuit_model() -> void:
 	if suit_scene_node == null:
 		return
 
-	# El modelo Mark III Spacesuit ya viene erguido internamente (MeshInstance3D rotado 90° en X) y mirando hacia adelante (-Z).
+	# El modelo Robonaut 2 ya viene escalado a 1.80 m, con los pies en Y=0, mirando hacia adelante (-Z) y sin la pieza inferior.
 	suit_scene_node.rotation_degrees = Vector3.ZERO
+	suit_scene_node.scale = Vector3.ONE
+	suit_scene_node.position = Vector3.ZERO
 	suit_pivot.add_child(suit_scene_node)
 
 	suit_meshes.clear()
 	_collect_meshes(suit_scene_node)
 
-	# Calcular AABB real en el espacio de suit_pivot para centrarlo, escalarlo a 1.80 m y apoyar pies en Y=0
-	if not suit_meshes.is_empty():
-		var mi: MeshInstance3D = suit_meshes[0]
-		var world_aabb: AABB = (suit_scene_node.transform * mi.transform) * mi.get_aabb()
-		var target_scale: float = 1.80 / max(world_aabb.size.y, 0.2)
-		suit_scene_node.scale = Vector3.ONE * target_scale
-		var scaled_aabb: AABB = (suit_scene_node.transform * mi.transform) * mi.get_aabb()
-		var center_xz := Vector2(scaled_aabb.position.x + scaled_aabb.size.x * 0.5, scaled_aabb.position.z + scaled_aabb.size.z * 0.5)
-		suit_scene_node.position = Vector3(-center_xz.x, -scaled_aabb.position.y, -center_xz.y)
+	suit_anim_player = _find_animation_player(suit_scene_node)
+	walk_anim_name = ""
+	jump_anim_name = ""
+	run_jump_anim_name = ""
+	if suit_anim_player != null:
+		var anims: PackedStringArray = suit_anim_player.get_animation_list()
+		for a_name in anims:
+			var low: String = a_name.to_lower()
+			var anim: Animation = suit_anim_player.get_animation(a_name)
+			if "runjump" in low:
+				run_jump_anim_name = a_name
+				if anim != null:
+					anim.loop_mode = Animation.LOOP_NONE
+			elif "jump" in low:
+				jump_anim_name = a_name
+				if anim != null:
+					anim.loop_mode = Animation.LOOP_NONE
+			elif "walk" in low or "mixamo" in low:
+				walk_anim_name = a_name
+				if anim != null:
+					anim.loop_mode = Animation.LOOP_LINEAR
+		if walk_anim_name == "" and not anims.is_empty():
+			walk_anim_name = anims[0]
+			var fallback_anim: Animation = suit_anim_player.get_animation(walk_anim_name)
+			if fallback_anim != null:
+				fallback_anim.loop_mode = Animation.LOOP_LINEAR
+		if walk_anim_name != "":
+			suit_anim_player.play(walk_anim_name)
+			suit_anim_player.seek(0.0, true)
+			suit_anim_player.pause()
+
+func _find_animation_player(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node as AnimationPlayer
+	for c in node.get_children():
+		var found := _find_animation_player(c)
+		if found != null:
+			return found
+	return null
 
 func _collect_meshes(node: Node) -> void:
 	if node is MeshInstance3D:
@@ -146,12 +183,12 @@ func _apply_camera_perspective() -> void:
 func _build_first_person_arms() -> void:
 	left_arm_mesh = _create_astronaut_arm(true)
 	left_arm_mesh.position = Vector3(-0.32, -0.32, -0.45)
-	left_arm_mesh.rotation_degrees = Vector3(10.0, -8.0, 0.0)
+	left_arm_mesh.rotation_degrees = Vector3(14.0, -16.0, 22.0)
 	camera.add_child(left_arm_mesh)
 
 	right_arm_mesh = _create_astronaut_arm(false)
 	right_arm_mesh.position = Vector3(0.32, -0.32, -0.45)
-	right_arm_mesh.rotation_degrees = Vector3(10.0, 8.0, 0.0)
+	right_arm_mesh.rotation_degrees = Vector3(14.0, 16.0, -22.0)
 	camera.add_child(right_arm_mesh)
 
 func _create_astronaut_arm(is_left: bool) -> Node3D:
@@ -167,9 +204,12 @@ func _create_astronaut_arm(is_left: bool) -> Node3D:
 			var max_dim: float = max(aabb_sz.x, max(aabb_sz.y, aabb_sz.z))
 			if max_dim > 0.01:
 				target_scale = 0.36 / max_dim
-		glove_node.scale = Vector3(-target_scale if is_left else target_scale, target_scale, target_scale)
-		_set_layer_recursive(glove_node, 4)
-		arm_root.add_child(glove_node)
+		glove_node.scale = Vector3.ONE * target_scale
+		_set_layer_recursive(glove_node, 4, not is_left)
+		var mirror_holder := Node3D.new()
+		mirror_holder.scale = Vector3(1.0 if is_left else -1.0, 1.0, 1.0)
+		mirror_holder.add_child(glove_node)
+		arm_root.add_child(mirror_holder)
 		return arm_root
 
 	# Respaldo procedural si el GLB no estuviera disponible
@@ -202,13 +242,20 @@ func _find_first_mesh(node: Node) -> MeshInstance3D:
 			return found
 	return null
 
-func _set_layer_recursive(node: Node, layer_mask: int) -> void:
+func _set_layer_recursive(node: Node, layer_mask: int, disable_culling: bool = false) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		mi.layers = layer_mask
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if disable_culling and mi.mesh != null:
+			for i in range(mi.mesh.get_surface_count()):
+				var mat: Material = mi.get_active_material(i)
+				if mat is BaseMaterial3D:
+					var mat_copy := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
+					mat_copy.cull_mode = BaseMaterial3D.CULL_DISABLED
+					mi.set_surface_override_material(i, mat_copy)
 	for c in node.get_children():
-		_set_layer_recursive(c, layer_mask)
+		_set_layer_recursive(c, layer_mask, disable_culling)
 
 func set_ui_mode(open: bool) -> void:
 	ui_open = open
@@ -302,19 +349,33 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
-	# Efecto sutil de paso (headbob) y balanceo del traje Mark III al caminar
+	# Efecto sutil de paso (headbob) y animación de caminata / salto del personaje
 	var base_cam_y: float = 0.45 if third_person else 0.0
 	var horiz_vel: float = Vector2(velocity.x, velocity.z).length()
-	if is_on_floor() and horiz_vel > 0.5:
+	var on_floor_now: bool = is_on_floor()
+
+	if on_floor_now and horiz_vel > 0.5:
 		camera.position.y = base_cam_y + sin(bob_time) * 0.035
-		if is_instance_valid(suit_pivot):
-			suit_pivot.position.y = abs(sin(bob_time)) * 0.045
-			suit_pivot.rotation_degrees.z = sin(bob_time) * 2.2
 	else:
 		camera.position.y = lerpf(camera.position.y, base_cam_y, delta * 8.0)
-		if is_instance_valid(suit_pivot):
-			suit_pivot.position.y = lerpf(suit_pivot.position.y, 0.0, delta * 8.0)
-			suit_pivot.rotation_degrees.z = lerpf(suit_pivot.rotation_degrees.z, 0.0, delta * 8.0)
+
+	if suit_anim_player != null:
+		if not on_floor_now:
+			var target_jump: String = run_jump_anim_name if (horiz_vel > 0.5 and run_jump_anim_name != "") else jump_anim_name
+			if target_jump != "" and (was_on_floor or (suit_anim_player.current_animation != jump_anim_name and suit_anim_player.current_animation != run_jump_anim_name)):
+				suit_anim_player.speed_scale = 1.0
+				suit_anim_player.play(target_jump)
+		elif horiz_vel > 0.5 and walk_anim_name != "":
+			suit_anim_player.speed_scale = 1.45 if horiz_vel > WALK_SPEED + 0.5 else 1.0
+			if suit_anim_player.current_animation != walk_anim_name or not suit_anim_player.is_playing():
+				suit_anim_player.play(walk_anim_name)
+		elif walk_anim_name != "":
+			if suit_anim_player.is_playing() or suit_anim_player.current_animation != walk_anim_name:
+				suit_anim_player.play(walk_anim_name)
+				suit_anim_player.seek(0.0, true)
+				suit_anim_player.pause()
+
+	was_on_floor = on_floor_now
 
 	# Física tipo Ragdoll (Spring-Damper en el punto exacto de agarre con colisiones reales)
 	if is_instance_valid(held_item):

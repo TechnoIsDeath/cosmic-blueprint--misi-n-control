@@ -48,6 +48,9 @@ func _ready() -> void:
 	GameState.phase_changed.connect(_on_phase_changed)
 	_refresh_3d_visuals()
 
+func _exit_tree() -> void:
+	PropModelLoader.clear_cache()
+
 func _build_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -222,23 +225,37 @@ func _build_open_world_terrain_and_base() -> void:
 	_build_interactive_station(world, Vector3(-7.6, 0.0, -5.5), 40.0, CatalogData.Role.SCIENTIST, Color(0.38, 1.0, 0.52), console_mat)
 	_build_interactive_station(world, Vector3(7.6, 0.0, 4.5), -140.0, CatalogData.Role.FLIGHT_SPEC, Color(1.0, 0.48, 0.82), console_mat)
 
-	# Conducto de Energía y RCS Auxiliar
-	var socket_mat := _make_mat(Color(0.95, 0.60, 0.18), Color(0.95, 0.55, 0.12), 1.6)
-	var sock := _add_static_box(
-		world,
-		Vector3(1.4, 2.0, 0.9),
-		Vector3(10.2, 1.0, -8.2),
-		socket_mat,
-		Vector3.ZERO,
-		{"interact_type": "power_socket"}
-	)
+	# Conducto de Energía y RCS Auxiliar (con modelo power_socket.glb)
+	var sock := StaticBody3D.new()
+	sock.position = Vector3(10.2, 0.0, -8.2)
+	sock.set_meta("interact_type", "power_socket")
+	world.add_child(sock)
+	var sock_col := CollisionShape3D.new()
+	var sock_box := BoxShape3D.new()
+	sock_box.size = Vector3(1.4, 2.0, 1.0)
+	sock_col.shape = sock_box
+	sock_col.position = Vector3(0.0, 1.0, 0.0)
+	sock.add_child(sock_col)
+	if _add_prop_visual(sock, "power_socket", Vector3.ZERO, Vector3.ZERO, 1.35) == null:
+		_add_visual_box(sock, Vector3(1.2, 1.8, 0.8), Vector3(0.0, 0.9, 0.0), _make_mat(Color(0.95, 0.60, 0.18)))
+
 	var sock_lbl := Label3D.new()
 	sock_lbl.text = "CONDUCTO AUXILIAR ORBITAL\n[Inserta Celdas de Batería o Tanques RCS aquí]"
 	sock_lbl.font_size = 22
 	sock_lbl.modulate = Color(1.0, 0.82, 0.35)
-	sock_lbl.position = Vector3(0.0, 1.35, 0.0)
+	sock_lbl.position = Vector3(0.0, 2.25, 0.0)
 	sock_lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	sock.add_child(sock_lbl)
+
+func _add_prop_visual(parent: Node3D, prop_name: String, pos: Vector3, rot_deg: Vector3 = Vector3.ZERO, scale_mult: float = 1.0) -> Node3D:
+	var n: Node3D = PropModelLoader.instantiate_prop(prop_name)
+	if n == null:
+		return null
+	n.position = pos
+	n.rotation_degrees = rot_deg
+	n.scale = Vector3.ONE * scale_mult
+	parent.add_child(n)
+	return n
 
 func _build_interactive_station(
 	parent: Node3D,
@@ -248,22 +265,32 @@ func _build_interactive_station(
 	glow_col: Color,
 	console_mat: Material
 ) -> void:
-	var st := _add_static_box(
-		parent,
-		Vector3(1.9, 1.35, 0.95),
-		pos + Vector3(0.0, 0.675, 0.0),
-		console_mat,
-		Vector3(0.0, rot_y, 0.0),
-		{"interact_type": "station_terminal", "role_id": role_id}
-	)
-	var screen_mat := _make_mat(glow_col * 0.35, glow_col, 1.8)
-	_add_visual_box(st, Vector3(0.85, 0.55, 0.12), Vector3(0.0, 0.45, -0.15), screen_mat)
+	var st := StaticBody3D.new()
+	st.position = pos
+	st.rotation_degrees = Vector3(0.0, rot_y, 0.0)
+	st.set_meta("interact_type", "station_terminal")
+	st.set_meta("role_id", role_id)
+	parent.add_child(st)
+
+	var st_col := CollisionShape3D.new()
+	var st_box := BoxShape3D.new()
+	st_box.size = Vector3(2.0, 1.5, 1.1)
+	st_col.shape = st_box
+	st_col.position = Vector3(0.0, 0.75, 0.0)
+	st.add_child(st_col)
+
+	if _add_prop_visual(st, "crt_station", Vector3.ZERO, Vector3(0.0, 180.0, 0.0), 1.3) == null:
+		_add_visual_box(st, Vector3(1.9, 1.35, 0.95), Vector3(0.0, 0.675, 0.0), console_mat)
+
+	# En la estación del Director colocamos la impresora matricial de recibos
+	if role_id == CatalogData.Role.DIRECTOR:
+		_add_prop_visual(st, "matrix_printer", Vector3(0.95, 0.95, 0.0), Vector3(0.0, 165.0, 0.0), 1.2)
 
 	var lbl := Label3D.new()
 	lbl.text = "TERMINAL [%d]: %s\n(Pulsa E para abrir consola CRT)" % [role_id + 1, CatalogData.ROLE_NAMES[role_id]]
 	lbl.font_size = 24
 	lbl.modulate = glow_col
-	lbl.position = Vector3(0.0, 1.15, 0.0)
+	lbl.position = Vector3(0.0, 2.05, 0.0)
 	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	st.add_child(lbl)
 
@@ -273,34 +300,35 @@ func _build_holographic_table() -> void:
 	holo_root.position = Vector3(0.0, 0.0, 0.0)
 	add_child(holo_root)
 
-	var base_mat := _make_mat(Color(0.16, 0.20, 0.26))
-	var holo_surface_mat := _make_mat(Color(0.08, 0.65, 0.88), Color(0.1, 0.8, 1.0), 2.1, 0.65)
+	var holo_body := StaticBody3D.new()
+	holo_body.set_meta("interact_type", "holo_table")
+	holo_root.add_child(holo_body)
 
-	# Pedestal físico interactivo (cuando traes una pieza en la mano y pulsas E, se acopla aquí)
-	_add_static_box(
-		holo_root,
-		Vector3(2.6, 0.95, 2.6),
-		Vector3(0.0, 0.475, 0.0),
-		base_mat,
-		Vector3.ZERO,
-		{"interact_type": "holo_table"}
-	)
-	_add_visual_cylinder(holo_root, 1.38, 1.38, 0.08, Vector3(0.0, 0.98, 0.0), holo_surface_mat)
+	var holo_col := CollisionShape3D.new()
+	var holo_box := BoxShape3D.new()
+	holo_box.size = Vector3(2.6, 1.1, 2.6)
+	holo_col.shape = holo_box
+	holo_col.position = Vector3(0.0, 0.55, 0.0)
+	holo_body.add_child(holo_col)
+
+	if _add_prop_visual(holo_body, "holo_table", Vector3.ZERO, Vector3.ZERO, 1.3) == null:
+		_add_visual_box(holo_body, Vector3(2.6, 0.95, 2.6), Vector3(0.0, 0.475, 0.0), _make_mat(Color(0.16, 0.20, 0.26)))
 
 	var lbl := Label3D.new()
 	lbl.text = "MESA HOLOGRÁFICA DE ENSAMBLAJE 3D\n[Trae piezas físicas del Hangar y pulsa E para acoplar | X para desacoplar]"
 	lbl.font_size = 25
 	lbl.modulate = Color(0.35, 0.95, 1.0)
-	lbl.position = Vector3(0.0, 2.85, 0.0)
+	lbl.position = Vector3(0.0, 2.95, 0.0)
 	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	holo_root.add_child(lbl)
 
 	spacecraft_pivot = Node3D.new()
-	spacecraft_pivot.position = Vector3(0.0, 1.75, 0.0)
+	spacecraft_pivot.position = Vector3(0.0, 1.85, 0.0)
 	holo_root.add_child(spacecraft_pivot)
 
-	var bus_mat := _make_mat(Color(0.90, 0.70, 0.18), Color(0.35, 0.25, 0.05), 0.5)
-	_add_visual_cylinder(spacecraft_pivot, 0.42, 0.42, 0.95, Vector3.ZERO, bus_mat)
+	if _add_prop_visual(spacecraft_pivot, "bus_central", Vector3(0.0, -0.25, 0.0), Vector3.ZERO, 1.0) == null:
+		var bus_mat := _make_mat(Color(0.90, 0.70, 0.18), Color(0.35, 0.25, 0.05), 0.5)
+		_add_visual_cylinder(spacecraft_pivot, 0.42, 0.42, 0.95, Vector3.ZERO, bus_mat)
 
 	parts_container = Node3D.new()
 	spacecraft_pivot.add_child(parts_container)
@@ -311,15 +339,19 @@ func _build_orbital_globe_3d() -> void:
 	globe_root.position = Vector3(8.5, 1.55, -3.5)
 	add_child(globe_root)
 
-	var ped_mat := _make_mat(Color(0.18, 0.20, 0.25))
-	_add_static_box(
-		globe_root,
-		Vector3(1.1, 1.1, 1.1),
-		Vector3(0.0, -1.0, 0.0),
-		ped_mat,
-		Vector3.ZERO,
-		{"interact_type": "station_terminal", "role_id": CatalogData.Role.FLIGHT_SPEC}
-	)
+	var stand_col_body := StaticBody3D.new()
+	stand_col_body.position = Vector3(0.0, -1.55, 0.0)
+	stand_col_body.set_meta("interact_type", "station_terminal")
+	stand_col_body.set_meta("role_id", CatalogData.Role.FLIGHT_SPEC)
+	globe_root.add_child(stand_col_body)
+	var sc_shape := CollisionShape3D.new()
+	var sc_box := BoxShape3D.new()
+	sc_box.size = Vector3(1.1, 1.2, 1.1)
+	sc_shape.shape = sc_box
+	sc_shape.position = Vector3(0.0, 0.6, 0.0)
+	stand_col_body.add_child(sc_shape)
+	if _add_prop_visual(stand_col_body, "globe_stand", Vector3.ZERO, Vector3.ZERO, 1.2) == null:
+		_add_visual_box(stand_col_body, Vector3(1.0, 1.0, 1.0), Vector3(0.0, 0.5, 0.0), _make_mat(Color(0.18, 0.20, 0.25)))
 
 	earth_sphere = MeshInstance3D.new()
 	var sm := SphereMesh.new()
@@ -362,11 +394,20 @@ func _build_hangar_and_dispensers() -> void:
 	add_child(hangar)
 
 	var shelf_mat := _make_mat(Color(0.32, 0.36, 0.42))
-	var disp_mat := _make_mat(Color(0.22, 0.46, 0.62), Color(0.15, 0.55, 0.78), 0.9)
 
 	# Mesas de trabajo amplias en el Hangar Oeste (pasillo central de 17m de ancho)
 	_add_static_box(hangar, Vector3(16.0, 0.75, 2.0), Vector3(-24.0, 0.375, -8.5), shelf_mat)
 	_add_static_box(hangar, Vector3(16.0, 0.75, 2.0), Vector3(-24.0, 0.375, 8.5), shelf_mat)
+
+	# Props industriales del Hangar desde Untitled.blend (estanterías, grúa puente, carretilla y focos)
+	for sx in [-20.0, -24.0, -28.0]:
+		_add_prop_visual(hangar, "hangar_shelf", Vector3(sx, 0.0, -11.1), Vector3.ZERO, 1.4)
+		_add_prop_visual(hangar, "hangar_shelf", Vector3(sx, 0.0, 11.1), Vector3(0.0, 180.0, 0.0), 1.4)
+
+	_add_prop_visual(hangar, "bridge_crane", Vector3(-24.0, 5.1, 0.0), Vector3(0.0, 90.0, 0.0), 2.2)
+	_add_prop_visual(hangar, "pallet_jack", Vector3(-19.5, 0.0, 3.2), Vector3(0.0, 28.0, 0.0), 1.2)
+	_add_prop_visual(hangar, "floodlight", Vector3(-15.5, 0.0, -6.2), Vector3(0.0, -45.0, 0.0), 1.2)
+	_add_prop_visual(hangar, "floodlight", Vector3(-15.5, 0.0, 6.2), Vector3(0.0, 45.0, 0.0), 1.2)
 
 	var h_lbl := Label3D.new()
 	h_lbl.text = "HANGAR DE MÓDULOS FÍSICOS 3D Y FABRICACIÓN\n[Recoge cualquier pieza con E / Clic Izq y llévala en tus manos a la Mesa Holográfica]"
@@ -376,24 +417,30 @@ func _build_hangar_and_dispensers() -> void:
 	h_lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	hangar.add_child(h_lbl)
 
-	# Terminales Dispensadoras Físicas espaciadas en el fondo del Hangar
+	# Terminales Dispensadoras Físicas con modelo part_dispenser.glb
 	var all_parts: Array[Dictionary] = CatalogData.get_parts()
 	for i in range(all_parts.size()):
 		var p: Dictionary = all_parts[i]
 		var z_pos: float = -9.5 + float(i) * 1.9
-		var kiosk := _add_static_box(
-			hangar,
-			Vector3(0.9, 1.35, 1.0),
-			Vector3(-35.8, 0.675, z_pos),
-			disp_mat,
-			Vector3.ZERO,
-			{"interact_type": "part_dispenser", "part_id": p["id"]}
-		)
+		var kiosk := StaticBody3D.new()
+		kiosk.position = Vector3(-35.8, 0.0, z_pos)
+		kiosk.set_meta("interact_type", "part_dispenser")
+		kiosk.set_meta("part_id", p["id"])
+		hangar.add_child(kiosk)
+		var kcol := CollisionShape3D.new()
+		var kbox := BoxShape3D.new()
+		kbox.size = Vector3(1.1, 1.9, 1.1)
+		kcol.shape = kbox
+		kcol.position = Vector3(0.0, 0.95, 0.0)
+		kiosk.add_child(kcol)
+		if _add_prop_visual(kiosk, "part_dispenser", Vector3.ZERO, Vector3(0.0, 90.0, 0.0), 1.15) == null:
+			_add_visual_box(kiosk, Vector3(0.9, 1.35, 1.0), Vector3(0.0, 0.675, 0.0), _make_mat(Color(0.22, 0.46, 0.62)))
+
 		var klbl := Label3D.new()
 		klbl.text = "DISPENSAR:\n%s\n($%.0fM)" % [p["name"], p["cost"]]
 		klbl.font_size = 19
 		klbl.modulate = p["color"].lightened(0.4)
-		klbl.position = Vector3(0.55, 1.0, 0.0)
+		klbl.position = Vector3(0.65, 2.25, 0.0)
 		klbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		kiosk.add_child(klbl)
 
@@ -402,31 +449,35 @@ func _build_exterior_dish_and_launchpad() -> void:
 	ext.name = "ExteriorComplex"
 	add_child(ext)
 
-	# 1. Antena Parabólica Gigante Exterior (Al Este del Búnker)
-	var dish_base := _add_static_box(
-		ext,
-		Vector3(3.2, 2.4, 3.2),
-		Vector3(32.0, 1.2, 0.0),
-		_make_mat(Color(0.32, 0.36, 0.40)),
-		Vector3.ZERO,
-		{"interact_type": "dish_calibrator"}
-	)
+	# 1. Antena Parabólica Gigante Exterior (exterior_dish.glb)
+	var dish_base := StaticBody3D.new()
+	dish_base.position = Vector3(32.0, 0.0, 0.0)
+	dish_base.set_meta("interact_type", "dish_calibrator")
+	ext.add_child(dish_base)
+	var dcol := CollisionShape3D.new()
+	var dbox := BoxShape3D.new()
+	dbox.size = Vector3(4.2, 4.5, 4.2)
+	dcol.shape = dbox
+	dcol.position = Vector3(0.0, 2.25, 0.0)
+	dish_base.add_child(dcol)
+
+	exterior_dish_head = Node3D.new()
+	dish_base.add_child(exterior_dish_head)
+	if _add_prop_visual(exterior_dish_head, "exterior_dish", Vector3.ZERO, Vector3.ZERO, 1.45) == null:
+		_add_visual_cylinder(exterior_dish_head, 3.4, 0.6, 1.2, Vector3(0.0, 2.6, 0.0), _make_mat(Color(0.88, 0.90, 0.95)))
+
 	var dish_light := OmniLight3D.new()
-	dish_light.position = Vector3(0.0, 6.5, 0.0)
+	dish_light.position = Vector3(0.0, 7.5, 0.0)
 	dish_light.omni_range = 24.0
 	dish_light.light_energy = 2.6
 	dish_light.light_color = Color(0.85, 0.95, 1.0)
 	dish_base.add_child(dish_light)
-	exterior_dish_head = Node3D.new()
-	exterior_dish_head.position = Vector3(0.0, 2.6, 0.0)
-	dish_base.add_child(exterior_dish_head)
-	_add_visual_cylinder(exterior_dish_head, 3.4, 0.6, 1.2, Vector3.ZERO, _make_mat(Color(0.88, 0.90, 0.95), Color(0.2, 0.5, 0.8), 0.5))
 
 	var dlbl := Label3D.new()
 	dlbl.text = "ESTACIÓN EXTERIOR DE TELEMETRÍA BANDA-X\n[Pulsa E aquí para Calibrar Frecuencia al 100%]"
 	dlbl.font_size = 26
 	dlbl.modulate = Color(0.4, 0.95, 1.0)
-	dlbl.position = Vector3(0.0, 5.2, 0.0)
+	dlbl.position = Vector3(0.0, 7.5, 0.0)
 	dlbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	dish_base.add_child(dlbl)
 
@@ -443,25 +494,33 @@ func _build_exterior_dish_and_launchpad() -> void:
 	pad.add_child(pad_light)
 
 	var concrete_mat := _make_mat(Color(0.32, 0.34, 0.36))
-	var tower_mat := _make_mat(Color(0.75, 0.25, 0.16))
 	_add_static_box(pad, Vector3(18.0, 0.8, 18.0), Vector3(0.0, 0.4, 0.0), concrete_mat)
-	_add_static_box(pad, Vector3(1.8, 15.0, 1.8), Vector3(-4.2, 7.8, 0.0), tower_mat)
-	_add_visual_box(pad, Vector3(3.4, 0.45, 0.6), Vector3(-2.0, 10.6, 0.0), tower_mat)
 
-	# Pedestal con Palanca Física de Ignición frente a la rampa
-	var lever_ped := _add_static_box(
-		ext,
-		Vector3(1.5, 1.35, 1.1),
-		Vector3(4.5, 0.675, -24.5),
-		_make_mat(Color(0.90, 0.22, 0.18), Color(0.95, 0.25, 0.15), 1.8),
-		Vector3.ZERO,
-		{"interact_type": "launch_lever"}
-	)
+	# Torre Umbilical desde Untitled.blend (launch_tower.glb) + Focos de plataforma (floodlight.glb)
+	if _add_prop_visual(pad, "launch_tower", Vector3(-3.8, 0.8, 0.0), Vector3.ZERO, 1.85) == null:
+		_add_static_box(pad, Vector3(1.8, 15.0, 1.8), Vector3(-4.2, 7.8, 0.0), _make_mat(Color(0.75, 0.25, 0.16)))
+	_add_prop_visual(pad, "floodlight", Vector3(6.5, 0.8, 6.5), Vector3(0.0, 45.0, 0.0), 1.4)
+	_add_prop_visual(pad, "floodlight", Vector3(-6.5, 0.8, 6.5), Vector3(0.0, -45.0, 0.0), 1.4)
+
+	# Pedestal con Palanca Física de Ignición (launch_lever.glb)
+	var lever_ped := StaticBody3D.new()
+	lever_ped.position = Vector3(4.5, 0.0, -24.5)
+	lever_ped.set_meta("interact_type", "launch_lever")
+	ext.add_child(lever_ped)
+	var lcol := CollisionShape3D.new()
+	var lbox := BoxShape3D.new()
+	lbox.size = Vector3(1.2, 1.6, 1.0)
+	lcol.shape = lbox
+	lcol.position = Vector3(0.0, 0.8, 0.0)
+	lever_ped.add_child(lcol)
+	if _add_prop_visual(lever_ped, "launch_lever", Vector3.ZERO, Vector3(0.0, 180.0, 0.0), 1.35) == null:
+		_add_visual_box(lever_ped, Vector3(1.4, 1.3, 1.0), Vector3(0.0, 0.65, 0.0), _make_mat(Color(0.90, 0.22, 0.18)))
+
 	var llbl := Label3D.new()
 	llbl.text = "PALANCA FÍSICA DE IGNICIÓN Y LANZAMIENTO\n[Pulsa E para despegar el cohete en vivo]"
 	llbl.font_size = 24
 	llbl.modulate = Color(1.0, 0.45, 0.35)
-	llbl.position = Vector3(0.0, 1.25, 0.0)
+	llbl.position = Vector3(0.0, 2.25, 0.0)
 	llbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	lever_ped.add_child(llbl)
 
@@ -472,13 +531,8 @@ func _build_exterior_dish_and_launchpad() -> void:
 	rocket_body = Node3D.new()
 	rocket_root.add_child(rocket_body)
 
-	var white_mat := _make_mat(Color(0.92, 0.93, 0.96), Color(0.2, 0.2, 0.25), 0.3)
-	var nose_mat := _make_mat(Color(0.88, 0.22, 0.15))
-	_add_visual_cylinder(rocket_body, 0.85, 1.05, 8.5, Vector3(0.0, 4.25, 0.0), white_mat)
-	_add_visual_cylinder(rocket_body, 0.08, 0.85, 2.8, Vector3(0.0, 9.9, 0.0), nose_mat)
-
 	rocket_flame = _add_visual_cylinder(
-		rocket_body,
+		rocket_root,
 		0.75,
 		1.45,
 		3.6,
@@ -486,6 +540,7 @@ func _build_exterior_dish_and_launchpad() -> void:
 		_make_mat(Color(1.0, 0.55, 0.1), Color(1.0, 0.45, 0.08), 4.2)
 	)
 	rocket_flame.visible = false
+	_update_rocket_model()
 
 func _spawn_player() -> void:
 	pickups_container = Node3D.new()
@@ -568,7 +623,20 @@ func _on_phase_changed(new_phase: int) -> void:
 		rocket_root.rotation_degrees = Vector3.ZERO
 		rocket_flame.visible = false
 
+func _update_rocket_model() -> void:
+	if not is_instance_valid(rocket_body):
+		return
+	for child in rocket_body.get_children():
+		child.queue_free()
+	var r_id: String = GameState.selected_rocket_id
+	if _add_prop_visual(rocket_body, r_id, Vector3.ZERO, Vector3.ZERO, 1.85) == null:
+		var white_mat := _make_mat(Color(0.92, 0.93, 0.96), Color(0.2, 0.2, 0.25), 0.3)
+		var nose_mat := _make_mat(Color(0.88, 0.22, 0.15))
+		_add_visual_cylinder(rocket_body, 0.85, 1.05, 8.5, Vector3(0.0, 4.25, 0.0), white_mat)
+		_add_visual_cylinder(rocket_body, 0.08, 0.85, 2.8, Vector3(0.0, 9.9, 0.0), nose_mat)
+
 func _refresh_3d_visuals() -> void:
+	_update_rocket_model()
 	if not is_instance_valid(parts_container):
 		return
 	for child in parts_container.get_children():
@@ -576,23 +644,36 @@ func _refresh_3d_visuals() -> void:
 
 	for i in range(GameState.placed_parts.size()):
 		var entry: Dictionary = GameState.placed_parts[i]
-		var part: Dictionary = CatalogData.get_part_by_id(entry.get("part_id", ""))
+		var p_id: String = entry.get("part_id", "")
+		var part: Dictionary = CatalogData.get_part_by_id(p_id)
 		if part.is_empty():
 			continue
 		var slot_pos: Vector3 = entry.get("slot_pos", Vector3.ZERO)
 		var rot_y: float = float(entry.get("rot_y", 0.0))
 		var is_off: bool = GameState.disabled_part_indices.has(i)
 
-		var col: Color = part["color"]
-		if is_off:
-			col = col.darkened(0.65)
-		var mat := _make_mat(col, col, 0.35 if is_off else 1.2)
-
 		var strut_pos: Vector3 = slot_pos * 0.5
-		_add_visual_box(parts_container, Vector3(0.12, 0.12, slot_pos.length()), strut_pos, _make_mat(Color(0.4, 0.5, 0.6)))
+		_add_visual_box(parts_container, Vector3(0.10, 0.10, slot_pos.length()), strut_pos, _make_mat(Color(0.4, 0.5, 0.6)))
 
-		var part_sz: Vector3 = part["size"] * 0.48
-		_add_visual_box(parts_container, part_sz, slot_pos, mat, Vector3(0.0, rot_y, 0.0))
+		var part_model: Node3D = PropModelLoader.instantiate_prop(p_id)
+		if part_model != null:
+			var aabb: AABB = PropModelLoader.get_combined_aabb(part_model)
+			var max_dim: float = max(aabb.size.x, max(aabb.size.y, aabb.size.z))
+			var s: float = 0.72 / max(max_dim, 0.1)
+			part_model.scale = Vector3.ONE * s
+			var center: Vector3 = (aabb.position + aabb.size * 0.5) * s
+			part_model.position = slot_pos - center
+			part_model.rotation_degrees = Vector3(0.0, rot_y, 0.0)
+			if is_off:
+				part_model.scale *= 0.82
+			parts_container.add_child(part_model)
+		else:
+			var col: Color = part["color"]
+			if is_off:
+				col = col.darkened(0.65)
+			var mat := _make_mat(col, col, 0.35 if is_off else 1.2)
+			var part_sz: Vector3 = part["size"] * 0.48
+			_add_visual_box(parts_container, part_sz, slot_pos, mat, Vector3(0.0, rot_y, 0.0))
 
 	if is_instance_valid(orbit_ring_pivot):
 		orbit_ring_pivot.rotation_degrees.z = GameState.target_inclination_deg
