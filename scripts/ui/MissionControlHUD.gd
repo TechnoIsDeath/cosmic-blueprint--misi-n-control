@@ -278,6 +278,15 @@ func _build_ui() -> void:
 	btn_toggle_ui.pressed.connect(func() -> void: set_terminal_open(not terminal_open))
 	role_row.add_child(btn_toggle_ui)
 
+	var btn_cam_view := Button.new()
+	btn_cam_view.text = "[V] 1.ª / 3.ª Pers."
+	btn_cam_view.modulate = Color(0.55, 0.88, 1.0)
+	btn_cam_view.pressed.connect(func() -> void:
+		if is_instance_valid(control_room) and is_instance_valid(control_room.player):
+			control_room.player.toggle_third_person()
+	)
+	role_row.add_child(btn_cam_view)
+
 	var btn_crt := Button.new()
 	btn_crt.text = "[F2] CRT"
 	btn_crt.pressed.connect(_toggle_crt_shader)

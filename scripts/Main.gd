@@ -18,9 +18,16 @@ func _ready() -> void:
 		_run_automated_verification(room)
 
 func _run_automated_verification(room: ControlRoom3D) -> void:
-	print("[TEST] 1. Jugador 1.ª Persona instanciado en pos: %s | Mallas Traje Mark III: %d" % [
-		str(room.player.global_position), room.player.suit_meshes.size()
+	var mi: MeshInstance3D = room.player.suit_meshes[0] if not room.player.suit_meshes.is_empty() else null
+	var suit_box: AABB = (room.player.suit_pivot.get_child(0).transform * mi.transform) * mi.get_aabb() if mi else AABB()
+	print("[TEST] 1. Jugador en pos: %s | Traje Mark III AABB: %s" % [
+		str(room.player.global_position), str(suit_box)
 	])
+	room.player.toggle_third_person()
+	print("[TEST]    -> Cambio a 3.ª persona: %s | Pos cámara: %s" % [
+		str(room.player.third_person), str(room.player.camera.position)
+	])
+	room.player.toggle_third_person()
 	print("[TEST] 2. Objetos físicos 3D en el mundo (PickupItem3D): ", room.pickups_container.get_child_count())
 	
 	# Probar recoger un objeto físico con el jugador y acoplarlo a la nave

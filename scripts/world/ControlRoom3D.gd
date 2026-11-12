@@ -22,6 +22,9 @@ var rocket_body: Node3D
 var rocket_flame: MeshInstance3D
 var room_alarm_light: OmniLight3D
 var exterior_dish_head: Node3D
+var mirror_root: Node3D
+var mirror_camera: Camera3D
+var mirror_viewport: SubViewport
 
 const STATION_SPAWN_POS: Dictionary = {
 	CatalogData.Role.DIRECTOR: Vector3(0.0, 0.25, 6.8),
@@ -37,6 +40,7 @@ func _ready() -> void:
 	_build_orbital_globe_3d()
 	_build_hangar_and_dispensers()
 	_build_exterior_dish_and_launchpad()
+	_build_inspection_mirror()
 	_spawn_player()
 	_spawn_initial_physical_items()
 
@@ -634,3 +638,74 @@ func _process(delta: float) -> void:
 		else:
 			room_alarm_light.light_color = Color(0.55, 0.90, 1.0)
 			room_alarm_light.light_energy = 2.2
+
+	# Actualizar cámara del espejo de inspección EVA en tiempo real
+	if is_instance_valid(mirror_root) and is_instance_valid(mirror_camera) and is_instance_valid(player) and is_instance_valid(player.camera):
+		var cam_pos: Vector3 = player.camera.global_position
+		var mirror_pos: Vector3 = mirror_root.global_position
+		var mirror_normal: Vector3 = -mirror_root.global_transform.basis.z.normalized()
+		var dist_to_plane: float = (cam_pos - mirror_pos).dot(mirror_normal)
+		var reflected_pos: Vector3 = cam_pos - 2.0 * dist_to_plane * mirror_normal
+		mirror_camera.global_position = reflected_pos
+		var look_target: Vector3 = mirror_pos + Vector3(0.0, 0.05, 0.0)
+		if mirror_camera.global_position.distance_to(look_target) > 0.1:
+			mirror_camera.look_at(look_target, Vector3.UP)
+
+func _build_inspection_mirror() -> void:
+	mirror_root = Node3D.new()
+	mirror_root.name = "InspectionMirror"
+	mirror_root.position = Vector3(4.6, 1.45, 7.2)
+	mirror_root.rotation_degrees = Vector3(0.0, 28.0, 0.0)
+	add_child(mirror_root)
+
+	# Respaldo y marco metálico físico
+	var frame_mat := _make_mat(Color(0.24, 0.28, 0.34))
+	var trim_mat := _make_mat(Color(0.85, 0.65, 0.18), Color(0.85, 0.65, 0.18), 0.7)
+	_add_static_box(mirror_root, Vector3(2.6, 2.8, 0.16), Vector3(0.0, 0.0, 0.12), frame_mat)
+	_add_visual_box(mirror_root, Vector3(2.7, 0.10, 0.22), Vector3(0.0, 1.42, 0.08), trim_mat)
+	_add_visual_box(mirror_root, Vector3(2.7, 0.10, 0.22), Vector3(0.0, -1.42, 0.08), trim_mat)
+
+	# SubViewport que renderiza al astronauta Mark III completo (capas 1 y 2, ocultando brazos flotantes de capa 3)
+	mirror_viewport = SubViewport.new()
+	mirror_viewport.size = Vector2i(512, 512)
+	mirror_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	mirror_root.add_child(mirror_viewport)
+
+	mirror_camera = Camera3D.new()
+	mirror_camera.fov = 52.0
+	mirror_camera.set_cull_mask_value(1, true)
+	mirror_camera.set_cull_mask_value(2, true)
+	mirror_camera.set_cull_mask_value(3, false)
+	mirror_viewport.add_child(mirror_camera)
+
+	# Superficie reflectante del espejo
+	var mirror_mesh := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(2.35, 2.55)
+	mirror_mesh.mesh = qm
+	mirror_mesh.position = Vector3(0.0, 0.0, 0.01)
+	mirror_mesh.rotation_degrees.y = 180.0
+
+	var mirror_mat := StandardMaterial3D.new()
+	mirror_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mirror_mat.albedo_texture = mirror_viewport.get_texture()
+	mirror_mat.uv1_scale = Vector3(-1.0, 1.0, 1.0)
+	mirror_mat.uv1_offset = Vector3(1.0, 0.0, 0.0)
+	mirror_mesh.material_override = mirror_mat
+	mirror_root.add_child(mirror_mesh)
+
+	# Luz dedicada para iluminar bien al astronauta frente al espejo
+	var spot := OmniLight3D.new()
+	spot.position = Vector3(0.0, 1.8, -1.6)
+	spot.omni_range = 8.0
+	spot.light_energy = 2.4
+	spot.light_color = Color(0.95, 0.98, 1.0)
+	mirror_root.add_child(spot)
+
+	var lbl := Label3D.new()
+	lbl.text = "ESPEJO DE INSPECCIÓN TRAJE MARK III"
+	lbl.font_size = 24
+	lbl.modulate = Color(0.45, 0.95, 1.0)
+	lbl.position = Vector3(0.0, 1.72, 0.0)
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	mirror_root.add_child(lbl)

@@ -19,8 +19,8 @@ var camera: Camera3D
 var raycast: RayCast3D
 var hand_anchor: Node3D
 var flashlight: SpotLight3D
-var left_arm_mesh: MeshInstance3D
-var right_arm_mesh: MeshInstance3D
+var left_arm_mesh: Node3D
+var right_arm_mesh: Node3D
 var suit_pivot: Node3D
 var suit_meshes: Array[MeshInstance3D] = []
 var third_person: bool = false
@@ -99,29 +99,29 @@ func _build_spacesuit_model() -> void:
 	if suit_scene_node == null:
 		return
 
-	# Orientación para modelos Z-up: levantar verticalmente y mirar al frente (-Z)
-	suit_scene_node.rotation_degrees = Vector3(-90.0, 180.0, 0.0)
+	# El modelo Mark III Spacesuit ya viene erguido internamente (MeshInstance3D rotado 90° en X) y mirando hacia adelante (-Z).
+	suit_scene_node.rotation_degrees = Vector3.ZERO
 	suit_pivot.add_child(suit_scene_node)
 
 	suit_meshes.clear()
 	_collect_meshes(suit_scene_node)
 
-	# Escalar automáticamente a 1.80 m de altura y apoyar pies en y = 0.0
-	var combined_height: float = 1.98
-	var min_y_local: float = -0.89
+	# Calcular AABB real en el espacio de suit_pivot para centrarlo, escalarlo a 1.80 m y apoyar pies en Y=0
 	if not suit_meshes.is_empty():
-		var first_aabb: AABB = suit_meshes[0].get_aabb()
-		# Tras rotar -90 en X, el eje Z del AABB original corresponde a la altura (Y)
-		combined_height = max(first_aabb.size.z, 0.2)
-		min_y_local = first_aabb.position.z
-
-	var target_scale: float = 1.80 / combined_height
-	suit_scene_node.scale = Vector3.ONE * target_scale
-	suit_scene_node.position = Vector3(0.0, -min_y_local * target_scale, 0.0)
+		var mi: MeshInstance3D = suit_meshes[0]
+		var world_aabb: AABB = (suit_scene_node.transform * mi.transform) * mi.get_aabb()
+		var target_scale: float = 1.80 / max(world_aabb.size.y, 0.2)
+		suit_scene_node.scale = Vector3.ONE * target_scale
+		var scaled_aabb: AABB = (suit_scene_node.transform * mi.transform) * mi.get_aabb()
+		var center_xz := Vector2(scaled_aabb.position.x + scaled_aabb.size.x * 0.5, scaled_aabb.position.z + scaled_aabb.size.z * 0.5)
+		suit_scene_node.position = Vector3(-center_xz.x, -scaled_aabb.position.y, -center_xz.y)
 
 func _collect_meshes(node: Node) -> void:
 	if node is MeshInstance3D:
-		suit_meshes.append(node as MeshInstance3D)
+		var mi := node as MeshInstance3D
+		mi.layers = 2
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		suit_meshes.append(mi)
 	for c in node.get_children():
 		_collect_meshes(c)
 
@@ -132,49 +132,103 @@ func _apply_camera_perspective() -> void:
 		hand_anchor.position = Vector3(0.0, -0.10, -(hold_distance + 2.55))
 		left_arm_mesh.visible = false
 		right_arm_mesh.visible = false
-		for mi in suit_meshes:
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		camera.set_cull_mask_value(2, true)
+		camera.set_cull_mask_value(3, false)
 	else:
 		camera.position = Vector3.ZERO
 		raycast.target_position = Vector3(0.0, 0.0, -4.5)
 		hand_anchor.position = Vector3(0.0, -0.18, -hold_distance)
 		left_arm_mesh.visible = true
 		right_arm_mesh.visible = true
-		for mi in suit_meshes:
-			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+		camera.set_cull_mask_value(2, false)
+		camera.set_cull_mask_value(3, true)
 
 func _build_first_person_arms() -> void:
-	var arm_mat := StandardMaterial3D.new()
-	arm_mat.albedo_color = Color(0.22, 0.36, 0.48)
-	arm_mat.roughness = 0.55
-	arm_mat.metallic = 0.3
-
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.11, 0.11, 0.55)
-
-	left_arm_mesh = MeshInstance3D.new()
-	left_arm_mesh.mesh = bm
-	left_arm_mesh.material_override = arm_mat
+	left_arm_mesh = _create_astronaut_arm(true)
 	left_arm_mesh.position = Vector3(-0.32, -0.32, -0.45)
 	left_arm_mesh.rotation_degrees = Vector3(10.0, -8.0, 0.0)
 	camera.add_child(left_arm_mesh)
 
-	right_arm_mesh = MeshInstance3D.new()
-	right_arm_mesh.mesh = bm
-	right_arm_mesh.material_override = arm_mat
+	right_arm_mesh = _create_astronaut_arm(false)
 	right_arm_mesh.position = Vector3(0.32, -0.32, -0.45)
 	right_arm_mesh.rotation_degrees = Vector3(10.0, 8.0, 0.0)
 	camera.add_child(right_arm_mesh)
+
+func _create_astronaut_arm(is_left: bool) -> Node3D:
+	var arm_root := Node3D.new()
+	var glove_node: Node3D = _load_glb_scene("res://assets/models/astronaut_glove.glb")
+	if glove_node != null:
+		# Orientar el eje largo (X) hacia adelante (-Z) y escalar a ~0.36 m
+		glove_node.rotation_degrees = Vector3(0.0, 90.0, 0.0)
+		var first_mesh := _find_first_mesh(glove_node)
+		var target_scale: float = 0.028
+		if first_mesh != null:
+			var aabb_sz: Vector3 = first_mesh.get_aabb().size
+			var max_dim: float = max(aabb_sz.x, max(aabb_sz.y, aabb_sz.z))
+			if max_dim > 0.01:
+				target_scale = 0.36 / max_dim
+		glove_node.scale = Vector3(-target_scale if is_left else target_scale, target_scale, target_scale)
+		_set_layer_recursive(glove_node, 4)
+		arm_root.add_child(glove_node)
+		return arm_root
+
+	# Respaldo procedural si el GLB no estuviera disponible
+	var fallback := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.11, 0.11, 0.45)
+	fallback.mesh = bm
+	fallback.layers = 4
+	arm_root.add_child(fallback)
+	return arm_root
+
+func _load_glb_scene(res_path: String) -> Node3D:
+	if ResourceLoader.exists(res_path):
+		var packed := load(res_path) as PackedScene
+		if packed:
+			return packed.instantiate() as Node3D
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	var abs_path: String = ProjectSettings.globalize_path(res_path)
+	if FileAccess.file_exists(abs_path) and doc.append_from_file(abs_path, state) == OK:
+		return doc.generate_scene(state) as Node3D
+	return null
+
+func _find_first_mesh(node: Node) -> MeshInstance3D:
+	if node is MeshInstance3D:
+		return node as MeshInstance3D
+	for c in node.get_children():
+		var found := _find_first_mesh(c)
+		if found != null:
+			return found
+	return null
+
+func _set_layer_recursive(node: Node, layer_mask: int) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		mi.layers = layer_mask
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c in node.get_children():
+		_set_layer_recursive(c, layer_mask)
 
 func set_ui_mode(open: bool) -> void:
 	ui_open = open
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if ui_open else Input.MOUSE_MODE_CAPTURED
 
+func toggle_third_person() -> void:
+	third_person = not third_person
+	_apply_camera_perspective()
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_V:
+			toggle_third_person()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and not ui_open and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(deg_to_rad(-event.relative.x * MOUSE_SENSITIVITY))
 		head.rotate_x(deg_to_rad(-event.relative.y * MOUSE_SENSITIVITY))
-		head.rotation.x = clampf(head.rotation.x, deg_to_rad(-82.0), deg_to_rad(82.0))
+		var max_pitch: float = 55.0 if third_person else 82.0
+		head.rotation.x = clampf(head.rotation.x, deg_to_rad(-max_pitch), deg_to_rad(max_pitch))
 
 	if event is InputEventMouseButton and event.pressed and not ui_open:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -213,9 +267,6 @@ func _unhandled_input(event: InputEvent) -> void:
 					_try_detach_part_from_table()
 			KEY_F:
 				flashlight.visible = not flashlight.visible
-			KEY_V:
-				third_person = not third_person
-				_apply_camera_perspective()
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
