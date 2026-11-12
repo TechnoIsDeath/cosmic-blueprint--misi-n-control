@@ -196,7 +196,7 @@ func _build_ui() -> void:
 
 	var lbl_controls := Label.new()
 	lbl_controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_controls.text = "[WASD] Caminar  [Shift] Correr  [Espacio] Saltar  [E / Clic Izq] Recoger / Acoplar / Usar  [Clic Der / G] Lanzar  [R] Rotar  [X] Desacoplar  [F] Linterna  [TAB] Abrir/Cerrar Terminal CRT"
+	lbl_controls.text = "[WASD] Caminar  [Shift] Correr  [Espacio] Saltar  [E/Clic] Agarrar/Usar  [Rueda] Distancia  [G/Der] Lanzar  [V] 1.ª/3.ª Pers.  [F] Linterna  [TAB] Terminal"
 	lbl_controls.add_theme_font_size_override("font_size", 13)
 	lbl_controls.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0))
 	controls_bar.add_child(lbl_controls)

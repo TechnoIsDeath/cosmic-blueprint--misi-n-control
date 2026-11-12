@@ -21,6 +21,9 @@ var hand_anchor: Node3D
 var flashlight: SpotLight3D
 var left_arm_mesh: MeshInstance3D
 var right_arm_mesh: MeshInstance3D
+var suit_pivot: Node3D
+var suit_meshes: Array[MeshInstance3D] = []
+var third_person: bool = false
 
 var held_item: PickupItem3D = null
 var held_rot_y: float = 0.0
@@ -70,7 +73,75 @@ func _ready() -> void:
 	camera.add_child(flashlight)
 
 	_build_first_person_arms()
+	_build_spacesuit_model()
+	_apply_camera_perspective()
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _build_spacesuit_model() -> void:
+	suit_pivot = Node3D.new()
+	suit_pivot.name = "SpacesuitPivot"
+	add_child(suit_pivot)
+
+	var suit_scene_node: Node3D = null
+	var glb_path: String = "res://assets/models/mark_iii_spacesuit.glb"
+	if ResourceLoader.exists(glb_path):
+		var packed := load(glb_path) as PackedScene
+		if packed:
+			suit_scene_node = packed.instantiate() as Node3D
+
+	if suit_scene_node == null:
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		var abs_path: String = ProjectSettings.globalize_path(glb_path)
+		if FileAccess.file_exists(abs_path) and doc.append_from_file(abs_path, state) == OK:
+			suit_scene_node = doc.generate_scene(state) as Node3D
+
+	if suit_scene_node == null:
+		return
+
+	# Orientación para modelos Z-up: levantar verticalmente y mirar al frente (-Z)
+	suit_scene_node.rotation_degrees = Vector3(-90.0, 180.0, 0.0)
+	suit_pivot.add_child(suit_scene_node)
+
+	suit_meshes.clear()
+	_collect_meshes(suit_scene_node)
+
+	# Escalar automáticamente a 1.80 m de altura y apoyar pies en y = 0.0
+	var combined_height: float = 1.98
+	var min_y_local: float = -0.89
+	if not suit_meshes.is_empty():
+		var first_aabb: AABB = suit_meshes[0].get_aabb()
+		# Tras rotar -90 en X, el eje Z del AABB original corresponde a la altura (Y)
+		combined_height = max(first_aabb.size.z, 0.2)
+		min_y_local = first_aabb.position.z
+
+	var target_scale: float = 1.80 / combined_height
+	suit_scene_node.scale = Vector3.ONE * target_scale
+	suit_scene_node.position = Vector3(0.0, -min_y_local * target_scale, 0.0)
+
+func _collect_meshes(node: Node) -> void:
+	if node is MeshInstance3D:
+		suit_meshes.append(node as MeshInstance3D)
+	for c in node.get_children():
+		_collect_meshes(c)
+
+func _apply_camera_perspective() -> void:
+	if third_person:
+		camera.position = Vector3(0.42, 0.45, 2.75)
+		raycast.target_position = Vector3(0.0, 0.0, -7.2)
+		hand_anchor.position = Vector3(0.0, -0.10, -(hold_distance + 2.55))
+		left_arm_mesh.visible = false
+		right_arm_mesh.visible = false
+		for mi in suit_meshes:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	else:
+		camera.position = Vector3.ZERO
+		raycast.target_position = Vector3(0.0, 0.0, -4.5)
+		hand_anchor.position = Vector3(0.0, -0.18, -hold_distance)
+		left_arm_mesh.visible = true
+		right_arm_mesh.visible = true
+		for mi in suit_meshes:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
 
 func _build_first_person_arms() -> void:
 	var arm_mat := StandardMaterial3D.new()
@@ -116,10 +187,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_throw_held_item(11.5)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			hold_distance = clampf(hold_distance - 0.20, 1.05, 3.2)
-			hand_anchor.position.z = -hold_distance
+			hand_anchor.position.z = -(hold_distance + (2.55 if third_person else 0.0))
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			hold_distance = clampf(hold_distance + 0.20, 1.05, 3.2)
-			hand_anchor.position.z = -hold_distance
+			hand_anchor.position.z = -(hold_distance + (2.55 if third_person else 0.0))
 
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
@@ -142,6 +213,9 @@ func _unhandled_input(event: InputEvent) -> void:
 					_try_detach_part_from_table()
 			KEY_F:
 				flashlight.visible = not flashlight.visible
+			KEY_V:
+				third_person = not third_person
+				_apply_camera_perspective()
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
@@ -177,12 +251,19 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
-	# Efecto sutil de paso (headbob) y animación de brazos
+	# Efecto sutil de paso (headbob) y balanceo del traje Mark III al caminar
+	var base_cam_y: float = 0.45 if third_person else 0.0
 	var horiz_vel: float = Vector2(velocity.x, velocity.z).length()
 	if is_on_floor() and horiz_vel > 0.5:
-		camera.position.y = sin(bob_time) * 0.035
+		camera.position.y = base_cam_y + sin(bob_time) * 0.035
+		if is_instance_valid(suit_pivot):
+			suit_pivot.position.y = abs(sin(bob_time)) * 0.045
+			suit_pivot.rotation_degrees.z = sin(bob_time) * 2.2
 	else:
-		camera.position.y = lerpf(camera.position.y, 0.0, delta * 8.0)
+		camera.position.y = lerpf(camera.position.y, base_cam_y, delta * 8.0)
+		if is_instance_valid(suit_pivot):
+			suit_pivot.position.y = lerpf(suit_pivot.position.y, 0.0, delta * 8.0)
+			suit_pivot.rotation_degrees.z = lerpf(suit_pivot.rotation_degrees.z, 0.0, delta * 8.0)
 
 	# Física tipo Ragdoll (Spring-Damper en el punto exacto de agarre con colisiones reales)
 	if is_instance_valid(held_item):
