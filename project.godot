@@ -13,17 +13,18 @@ config_version=5
 config/name="Cosmic Blueprint: Misión Control"
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
-config/icon="res://icon.svg"
+config/icon="uid://dd2gmuce03ibf"
 
 [autoload]
 
 GameState="*res://scripts/core/GameState.gd"
+Campaign="*res://scripts/core/CampaignManager.gd"
 
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-window/size/mode=3
+window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 

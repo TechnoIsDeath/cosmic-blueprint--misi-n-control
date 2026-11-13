@@ -9,15 +9,24 @@ func _ready() -> void:
 	room.name = "ControlRoom3D"
 	add_child(room)
 
+	var campaign_world := CampaignWorld.new()
+	campaign_world.setup(room)
+	add_child(campaign_world)
+
 	var hud := MissionControlHUD.new()
 	hud.name = "MissionControlHUD"
 	add_child(hud)
 	hud.setup_with_room(room)
 
-	if OS.get_cmdline_user_args().has("--run-self-test"):
-		_run_automated_verification(room)
+	var campaign_hud := CampaignHUD.new()
+	campaign_hud.name = "CampaignHUD"
+	campaign_hud.setup(room)
+	add_child(campaign_hud)
 
-func _run_automated_verification(room: ControlRoom3D) -> void:
+	if OS.get_cmdline_user_args().has("--run-self-test"):
+		_run_automated_verification(room, campaign_world)
+
+func _run_automated_verification(room: ControlRoom3D, campaign_world: CampaignWorld) -> void:
 	var mi: MeshInstance3D = room.player.suit_meshes[0] if not room.player.suit_meshes.is_empty() else null
 	var suit_box: AABB = (room.player.suit_pivot.get_child(0).transform * mi.transform) * mi.get_aabb() if mi else AABB()
 	print("[TEST] 1. Jugador en pos: %s | Traje Mark III AABB: %s" % [
@@ -52,4 +61,22 @@ func _run_automated_verification(room: ControlRoom3D) -> void:
 		if not GameState.active_crisis.is_empty():
 			GameState.fire_rcs_correction()
 	print("[TEST] 6. Fin de operación orbital -> Calificación: ", GameState.last_receipt.get("grade", ""))
+
+	# Verificar Campaña Artemis (Cinemática despertar, cama, correo, credencial, cambio de zonas Adopt Me y Sitio de Lanzamiento)
+	for ev in ["woke_up", "make_bed", "read_email", "badge_taken"]:
+		Campaign.notify_event(ev)
+	Campaign.request_zone_change(Campaign.Zone.CITY, "from_home", "exit_home")
+	for ev in ["reach:gate", "show_badge"]:
+		Campaign.notify_event(ev)
+	Campaign.request_zone_change(Campaign.Zone.LAUNCH_SITE, "from_city", "enter_nasa_complex")
+	for ev in ["visit:vab", "visit:training", "visit:pad", "visit:mcc"]:
+		Campaign.notify_event(ev)
+	Campaign.request_zone_change(Campaign.Zone.NASA_INTERIOR, "from_launch_site", "briefing_artemis")
+	print("[TEST] 7. Campaña Artemis -> Reto actual: %s | Zona: %d | Logros: %d/%d | Cohete sitio: %s" % [
+		Campaign.get_current_objective().get("id", ""),
+		Campaign.current_zone,
+		Campaign.completed_count(),
+		Campaign.achievements.size(),
+		str(is_instance_valid(campaign_world.site_rocket_node))
+	])
 	get_tree().quit(0)

@@ -46,7 +46,10 @@ func _ready() -> void:
 
 	GameState.design_updated.connect(_refresh_3d_visuals)
 	GameState.phase_changed.connect(_on_phase_changed)
+	Campaign.objective_changed.connect(_on_campaign_objective_changed)
+	Campaign.slot_loaded.connect(_on_campaign_slot_loaded)
 	_refresh_3d_visuals()
+	_sync_campaign_visibility()
 
 func _exit_tree() -> void:
 	PropModelLoader.clear_cache()
@@ -210,13 +213,6 @@ func _build_open_world_terrain_and_base() -> void:
 	# Líneas luminosas guía en el suelo
 	_add_visual_box(world, Vector3(32.0, 0.04, 0.18), Vector3(-16.0, 0.08, 0.0), neon_cyan)
 	_add_visual_box(world, Vector3(0.18, 0.04, 38.0), Vector3(0.0, 0.08, -22.0), neon_amber)
-
-	# Montañas low-poly decorativas en el horizonte lejano
-	var mount_mat := _make_mat(Color(0.16, 0.21, 0.28))
-	for i in range(14):
-		var ang: float = float(i) * (TAU / 14.0)
-		var m_pos := Vector3(cos(ang) * 115.0, 10.0, sin(ang) * 115.0)
-		_add_visual_cylinder(world, 2.5, 26.0, 22.0 + float(i % 3) * 7.0, m_pos, mount_mat)
 
 	# Las 4 Terminales CRT Físicas Interactivas bien espaciadas alrededor del centro
 	var console_mat := _make_mat(Color(0.32, 0.36, 0.42))
@@ -553,46 +549,54 @@ func _spawn_player() -> void:
 	player.spawn_part_requested.connect(spawn_physical_part)
 	add_child(player)
 
+func _on_campaign_slot_loaded() -> void:
+	if is_instance_valid(player) and is_instance_valid(player.held_item):
+		player.held_item.queue_free()
+		player.held_item = null
+	_spawn_initial_physical_items()
+	_refresh_3d_visuals()
+	_sync_campaign_visibility()
+
 func _spawn_initial_physical_items() -> void:
-	# Colocar piezas físicas listas para recoger en las mesas del Hangar Oeste y cerca de la mesa
+	if is_instance_valid(pickups_container):
+		for c in pickups_container.get_children():
+			c.queue_free()
+
+	var init_idx: int = 0
 	var starter_parts: Array[String] = [
 		"solar_std", "solar_xl", "battery_nih2", "rcs_thruster",
 		"ant_omni", "ant_dish", "sci_cam", "sci_ir", "sci_mag", "sci_sar"
 	]
 	for i in range(starter_parts.size()):
+		var pid: String = "init_%d" % init_idx
+		init_idx += 1
+		if Campaign.collected_items.has(pid):
+			continue
 		var row_z: float = -8.5 if i < 5 else 8.5
 		var col_x: float = -18.0 - float(i % 5) * 2.7
-		spawn_physical_part(starter_parts[i], Vector3(col_x, 1.35, row_z))
+		var item := spawn_physical_part(starter_parts[i], Vector3(col_x, 1.35, row_z))
+		item.set_meta("pickup_id", pid)
 
 	# También dejamos 2 módulos físicos justo al lado de la Mesa Holográfica para probar al instante
-	spawn_physical_part("solar_std", Vector3(-2.8, 1.1, 0.0))
-	spawn_physical_part("sci_cam", Vector3(2.8, 1.1, 0.0))
+	for extra in [["solar_std", Vector3(-2.8, 1.1, 0.0)], ["sci_cam", Vector3(2.8, 1.1, 0.0)]]:
+		var pid: String = "init_%d" % init_idx
+		init_idx += 1
+		if not Campaign.collected_items.has(pid):
+			var item := spawn_physical_part(String(extra[0]), extra[1])
+			item.set_meta("pickup_id", pid)
 
 	# Suministros físicos de emergencia (Celdas de Batería y Tanques RCS)
-	_spawn_utility_pickup(
-		PickupItem3D.ItemType.BATTERY_CELL,
-		"Celda de Emergencia +380 Wh",
-		"Conéctala al Conducto Auxiliar",
-		Color(1.0, 0.80, 0.15),
-		Vector3(0.45, 0.45, 0.45),
-		Vector3(8.8, 1.0, -7.8)
-	)
-	_spawn_utility_pickup(
-		PickupItem3D.ItemType.RCS_TANK,
-		"Tanque de Hidracina +45 kg RCS",
-		"Conéctalo al Conducto Auxiliar",
-		Color(0.95, 0.35, 0.15),
-		Vector3(0.42, 0.62, 0.42),
-		Vector3(7.6, 1.0, -7.8)
-	)
-	_spawn_utility_pickup(
-		PickupItem3D.ItemType.VHS_BRIEFING,
-		"Cinta VHS: Directrices BOREAL-1",
-		"Archivo Clasificado de Misión",
-		Color(0.20, 0.85, 0.95),
-		Vector3(0.38, 0.12, 0.25),
-		Vector3(0.6, 1.5, 8.4)
-	)
+	var utils: Array = [
+		[PickupItem3D.ItemType.BATTERY_CELL, "Celda de Emergencia +380 Wh", "Conéctala al Conducto Auxiliar", Color(1.0, 0.80, 0.15), Vector3(0.45, 0.45, 0.45), Vector3(8.8, 1.0, -7.8)],
+		[PickupItem3D.ItemType.RCS_TANK, "Tanque de Hidracina +45 kg RCS", "Conéctalo al Conducto Auxiliar", Color(0.95, 0.35, 0.15), Vector3(0.42, 0.62, 0.42), Vector3(7.6, 1.0, -7.8)],
+		[PickupItem3D.ItemType.VHS_BRIEFING, "Cinta VHS: Directrices BOREAL-1", "Archivo Clasificado de Misión", Color(0.20, 0.85, 0.95), Vector3(0.38, 0.12, 0.25), Vector3(0.6, 1.5, 8.4)],
+	]
+	for u in utils:
+		var pid: String = "init_%d" % init_idx
+		init_idx += 1
+		if not Campaign.collected_items.has(pid):
+			var u_item := _spawn_utility_pickup(int(u[0]), String(u[1]), String(u[2]), u[3], u[4], u[5])
+			u_item.set_meta("pickup_id", pid)
 
 func spawn_physical_part(part_id: String, world_pos: Vector3) -> PickupItem3D:
 	var item := PickupItem3D.new()
@@ -601,11 +605,12 @@ func spawn_physical_part(part_id: String, world_pos: Vector3) -> PickupItem3D:
 	item.setup_part(part_id)
 	return item
 
-func _spawn_utility_pickup(u_type: int, title: String, sub: String, col: Color, sz: Vector3, pos: Vector3) -> void:
+func _spawn_utility_pickup(u_type: int, title: String, sub: String, col: Color, sz: Vector3, pos: Vector3) -> PickupItem3D:
 	var item := PickupItem3D.new()
 	item.position = pos
 	pickups_container.add_child(item)
 	item.setup_utility_item(u_type, title, sub, col, sz)
+	return item
 
 func teleport_player_to_role_station(role_id: int) -> void:
 	if not is_instance_valid(player):
@@ -622,6 +627,22 @@ func _on_phase_changed(new_phase: int) -> void:
 		rocket_root.position = Vector3(0.0, 0.8, 0.0)
 		rocket_root.rotation_degrees = Vector3.ZERO
 		rocket_flame.visible = false
+	_sync_campaign_visibility()
+
+func _on_campaign_objective_changed(_obj: Dictionary) -> void:
+	_sync_campaign_visibility()
+
+func _sync_campaign_visibility() -> void:
+	var obj: Dictionary = Campaign.get_current_objective()
+	var chapter: int = int(obj.get("chapter", 0))
+	var need_rocket: bool = GameState.current_phase >= CatalogData.Phase.LAUNCH_SIM or not GameState.placed_parts.is_empty() or chapter >= 3
+	if is_instance_valid(rocket_root):
+		rocket_root.visible = need_rocket
+	if is_instance_valid(spacecraft_pivot):
+		spacecraft_pivot.visible = not GameState.placed_parts.is_empty() or GameState.current_phase >= CatalogData.Phase.LAUNCH_SIM or chapter >= 3
+	if is_instance_valid(player):
+		var show_gloves: bool = GameState.current_phase >= CatalogData.Phase.LAUNCH_SIM or chapter >= 7
+		player.set_suit_gloves_enabled(show_gloves)
 
 func _update_rocket_model() -> void:
 	if not is_instance_valid(rocket_body):
@@ -637,6 +658,7 @@ func _update_rocket_model() -> void:
 
 func _refresh_3d_visuals() -> void:
 	_update_rocket_model()
+	_sync_campaign_visibility()
 	if not is_instance_valid(parts_container):
 		return
 	for child in parts_container.get_children():

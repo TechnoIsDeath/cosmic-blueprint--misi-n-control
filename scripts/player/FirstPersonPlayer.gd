@@ -29,12 +29,14 @@ var jump_anim_name: String = ""
 var run_jump_anim_name: String = ""
 var was_on_floor: bool = true
 var third_person: bool = false
+var suit_gloves_enabled: bool = false
 
 var held_item: PickupItem3D = null
 var held_rot_y: float = 0.0
 var grab_local_offset: Vector3 = Vector3.ZERO
 var hold_distance: float = 1.85
 var ui_open: bool = false
+var in_cinematic: bool = false
 var bob_time: float = 0.0
 var current_prompt: String = ""
 
@@ -162,6 +164,10 @@ func _collect_meshes(node: Node) -> void:
 	for c in node.get_children():
 		_collect_meshes(c)
 
+func set_suit_gloves_enabled(enabled: bool) -> void:
+	suit_gloves_enabled = enabled
+	_apply_camera_perspective()
+
 func _apply_camera_perspective() -> void:
 	if third_person:
 		camera.position = Vector3(0.42, 0.45, 2.75)
@@ -175,8 +181,8 @@ func _apply_camera_perspective() -> void:
 		camera.position = Vector3.ZERO
 		raycast.target_position = Vector3(0.0, 0.0, -4.5)
 		hand_anchor.position = Vector3(0.0, -0.18, -hold_distance)
-		left_arm_mesh.visible = true
-		right_arm_mesh.visible = true
+		left_arm_mesh.visible = suit_gloves_enabled
+		right_arm_mesh.visible = suit_gloves_enabled
 		camera.set_cull_mask_value(2, false)
 		camera.set_cull_mask_value(3, true)
 
@@ -276,6 +282,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		head.rotate_x(deg_to_rad(-event.relative.y * MOUSE_SENSITIVITY))
 		var max_pitch: float = 55.0 if third_person else 82.0
 		head.rotation.x = clampf(head.rotation.x, deg_to_rad(-max_pitch), deg_to_rad(max_pitch))
+		if event.relative.length_squared() > 1.0:
+			Campaign.notify_event("looked")
 
 	if event is InputEventMouseButton and event.pressed and not ui_open:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
@@ -315,13 +323,33 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F:
 				flashlight.visible = not flashlight.visible
 
+func play_wakeup_cinematic(bed_pos: Vector3, stand_pos: Vector3) -> void:
+	in_cinematic = true
+	velocity = Vector3.ZERO
+	global_position = bed_pos
+	rotation_degrees = Vector3(0.0, -90.0, 0.0)
+	head.rotation_degrees = Vector3(32.0, 0.0, -22.0)
+	var tw := create_tween()
+	tw.tween_property(head, "rotation_degrees", Vector3(8.0, 0.0, 0.0), 1.2).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(self, "global_position", bed_pos + Vector3(0.35, 0.20, 0.0), 1.2).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(head, "rotation_degrees", Vector3.ZERO, 1.0).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(self, "global_position", stand_pos, 1.0).set_trans(Tween.TRANS_SINE)
+	tw.tween_callback(func() -> void:
+		in_cinematic = false
+		head.rotation_degrees = Vector3.ZERO
+		Campaign.notify_event("woke_up")
+	)
+
 func _physics_process(delta: float) -> void:
+	if in_cinematic:
+		return
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
 
 	if not ui_open:
 		if Input.is_key_pressed(KEY_SPACE) and is_on_floor():
 			velocity.y = JUMP_VELOCITY
+			Campaign.notify_event("jumped")
 
 		var input_dir := Vector2.ZERO
 		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
@@ -340,6 +368,8 @@ func _physics_process(delta: float) -> void:
 			velocity.x = move_dir.x * spd
 			velocity.z = move_dir.z * spd
 			bob_time += delta * (11.0 if spd > WALK_SPEED else 7.5)
+			Campaign.notify_event("moved")
+			Campaign.notify_event("woke_up")
 		else:
 			velocity.x = move_toward(velocity.x, 0.0, spd * 8.0 * delta)
 			velocity.z = move_toward(velocity.z, 0.0, spd * 8.0 * delta)
@@ -440,6 +470,10 @@ func _update_interaction_ray() -> void:
 						prompt = "Conducto Auxiliar Orbital (Trae una Celda de Batería o Tanque RCS en tus manos)"
 				"dish_calibrator":
 					prompt = "[E / Clic Izq] Calibrar Antena Parabólica Exterior al 100% de Ganancia"
+				"campaign":
+					prompt = String(col.get_meta("prompt", "[E] Interactuar"))
+				"zone_portal":
+					prompt = String(col.get_meta("prompt", "[E] Entrar / Cambiar de zona"))
 
 	if prompt != current_prompt or is_instance_valid(held_item):
 		current_prompt = prompt
@@ -505,6 +539,32 @@ func _handle_primary_interact() -> void:
 				GameState.set_antenna_frequency(GameState.optimal_freq_mhz)
 				GameState.add_log("[ANTENA EXTERIOR] Plato parabólico sintonizado manualmente a %.0f MHz (100%%)." % GameState.optimal_freq_mhz)
 				return
+			"campaign":
+				var req: String = String(col.get_meta("requires", ""))
+				if req != "" and not Campaign.has_event(req):
+					var msg: String = String(col.get_meta("requires_msg", "Te falta algo para hacer esto."))
+					Campaign.info_requested.emit("Control de Seguridad", msg, true)
+					return
+				var ev: String = String(col.get_meta("event", ""))
+				if ev != "":
+					Campaign.notify_event(ev)
+				var info_id: String = String(col.get_meta("info", ""))
+				if info_id != "":
+					Campaign.show_info(info_id, true)
+				if bool(col.get_meta("consume", false)):
+					col.queue_free()
+				return
+			"zone_portal":
+				var req: String = String(col.get_meta("requires", ""))
+				if req != "" and not Campaign.has_event(req):
+					var msg: String = String(col.get_meta("requires_msg", "Completa primero tus tareas antes de pasar."))
+					Campaign.info_requested.emit("Aviso", msg, true)
+					return
+				var tz: int = int(col.get_meta("target_zone", 0))
+				var stag: String = String(col.get_meta("spawn_tag", "default"))
+				var zev: String = String(col.get_meta("event", ""))
+				Campaign.request_zone_change(tz, stag, zev)
+				return
 
 	# Si tenemos algo en la mano y hacemos clic en otra parte, lo soltamos
 	if is_instance_valid(held_item):
@@ -525,6 +585,9 @@ func _grab_item(item: PickupItem3D, hit_point: Vector3 = Vector3.INF) -> void:
 		grab_local_offset = held_item.to_local(hit_point)
 	else:
 		grab_local_offset = Vector3.ZERO
+
+	if held_item.has_meta("pickup_id"):
+		Campaign.record_collected_item(String(held_item.get_meta("pickup_id")))
 
 	if held_item.item_type == PickupItem3D.ItemType.VHS_BRIEFING:
 		GameState.add_log("[JUGADOR] Cinta VHS de Briefing agarrada: " + held_item.display_name)

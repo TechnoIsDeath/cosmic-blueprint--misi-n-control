@@ -19,6 +19,7 @@ var lbl_mini_telemetry: RichTextLabel
 var terminal_modal_root: Control
 
 # Cabecera superior
+var top_bar: PanelContainer
 var lbl_header_mission: Label
 var lbl_header_phase: Label
 var lbl_header_budget: Label
@@ -63,6 +64,9 @@ var receipt_char_progress: float = 0.0
 
 func setup_with_room(room: ControlRoom3D) -> void:
 	control_room = room
+	_refresh_mini_hud_visibility()
+	if is_instance_valid(top_bar):
+		top_bar.visible = terminal_open
 	if is_instance_valid(control_room) and is_instance_valid(control_room.player):
 		control_room.player.hover_prompt_changed.connect(_on_player_hover_changed)
 		control_room.player.terminal_toggle_requested.connect(_on_terminal_requested)
@@ -77,6 +81,7 @@ func _ready() -> void:
 	GameState.telemetry_updated.connect(_refresh_telemetry_views)
 	GameState.log_message_added.connect(_on_log_added)
 	GameState.conflict_updated.connect(_refresh_all_panels)
+	Campaign.zone_changed.connect(_on_campaign_zone_changed)
 
 	# Arrancar directamente en Fase 2 (Ensamblaje Abierto) y modo 1.ª persona activo
 	GameState.set_phase(CatalogData.Phase.ASSEMBLY)
@@ -84,12 +89,23 @@ func _ready() -> void:
 	_on_role_changed(GameState.current_role)
 	_refresh_all_panels()
 
+func _refresh_mini_hud_visibility() -> void:
+	if is_instance_valid(mini_hud_box):
+		var in_space_area: bool = Campaign.current_zone >= Campaign.Zone.LAUNCH_SITE
+		mini_hud_box.visible = (not terminal_open) and in_space_area
+
+func _on_campaign_zone_changed(_z: int, _spawn_id: String = "") -> void:
+	_refresh_mini_hud_visibility()
+
 func set_terminal_open(open: bool) -> void:
 	terminal_open = open
 	if is_instance_valid(terminal_modal_root):
 		terminal_modal_root.visible = terminal_open
 	if is_instance_valid(crosshair_label):
 		crosshair_label.visible = not terminal_open
+	_refresh_mini_hud_visibility()
+	if is_instance_valid(top_bar):
+		top_bar.visible = terminal_open
 	if is_instance_valid(control_room) and is_instance_valid(control_room.player):
 		control_room.player.set_ui_mode(terminal_open)
 
@@ -117,22 +133,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_TAB, KEY_ESCAPE:
 				set_terminal_open(not terminal_open)
-			KEY_1:
-				GameState.set_role(CatalogData.Role.DIRECTOR)
-				if is_instance_valid(control_room):
-					control_room.teleport_player_to_role_station(CatalogData.Role.DIRECTOR)
-			KEY_2:
-				GameState.set_role(CatalogData.Role.ENGINEER)
-				if is_instance_valid(control_room):
-					control_room.teleport_player_to_role_station(CatalogData.Role.ENGINEER)
-			KEY_3:
-				GameState.set_role(CatalogData.Role.SCIENTIST)
-				if is_instance_valid(control_room):
-					control_room.teleport_player_to_role_station(CatalogData.Role.SCIENTIST)
-			KEY_4:
-				GameState.set_role(CatalogData.Role.FLIGHT_SPEC)
-				if is_instance_valid(control_room):
-					control_room.teleport_player_to_role_station(CatalogData.Role.FLIGHT_SPEC)
 			KEY_F2:
 				_toggle_crt_shader()
 
@@ -196,7 +196,7 @@ func _build_ui() -> void:
 
 	var lbl_controls := Label.new()
 	lbl_controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl_controls.text = "[WASD] Caminar  [Shift] Correr  [Espacio] Saltar  [E/Clic] Agarrar/Usar  [Rueda] Distancia  [G/Der] Lanzar  [V] 1.ª/3.ª Pers.  [F] Linterna  [TAB] Terminal"
+	lbl_controls.text = "[WASD] Caminar  [Shift] Correr  [Espacio] Saltar  [E/Clic] Agarrar/Usar  [L] Logros  [M] Partidas  [V] 1.ª/3.ª Pers.  [F] Linterna  [TAB] Terminal"
 	lbl_controls.add_theme_font_size_override("font_size", 13)
 	lbl_controls.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0))
 	controls_bar.add_child(lbl_controls)
@@ -219,7 +219,9 @@ func _build_ui() -> void:
 	# ==========================================================
 	# 2. BARRA SUPERIOR COMPACTA
 	# ==========================================================
-	var top_bar := PanelContainer.new()
+	top_bar = PanelContainer.new()
+	top_bar.name = "TopBar"
+	top_bar.visible = false
 	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	top_bar.custom_minimum_size.y = 72
 	top_bar.add_theme_stylebox_override("panel", _make_panel_style(Color(0.04, 0.07, 0.11, 0.88), Color(0.2, 0.85, 0.95)))
@@ -252,17 +254,12 @@ func _build_ui() -> void:
 	role_row.add_theme_constant_override("separation", 8)
 	top_vbox.add_child(role_row)
 
-	for r_idx in range(4):
-		var btn := Button.new()
-		btn.text = "[%d] %s" % [r_idx + 1, CatalogData.ROLE_NAMES[r_idx]]
-		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var captured_role: int = r_idx
-		btn.pressed.connect(func() -> void:
-			GameState.set_role(captured_role)
-			set_terminal_open(true)
-		)
-		role_row.add_child(btn)
-		role_buttons.append(btn)
+	var lbl_single_role := Label.new()
+	lbl_single_role.text = "ROL ÚNICO: INGENIERO DE MISIÓN · PROGRAMA ARTEMIS"
+	lbl_single_role.add_theme_color_override("font_color", Color(0.55, 0.95, 1.0))
+	lbl_single_role.add_theme_font_size_override("font_size", 14)
+	lbl_single_role.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	role_row.add_child(lbl_single_role)
 
 	var btn_brief := Button.new()
 	btn_brief.text = "Briefing RPG"
@@ -291,15 +288,6 @@ func _build_ui() -> void:
 	btn_crt.text = "[F2] CRT"
 	btn_crt.pressed.connect(_toggle_crt_shader)
 	role_row.add_child(btn_crt)
-
-	var btn_lan := Button.new()
-	btn_lan.tooltip_text = "Multijugador LAN"
-	btn_lan.text = "LAN"
-	btn_lan.pressed.connect(func() -> void:
-		set_terminal_open(true)
-		panel_lan_modal.visible = not panel_lan_modal.visible
-	)
-	role_row.add_child(btn_lan)
 
 	# ==========================================================
 	# 3. CONTENEDOR MODAL DE TERMINALES CRT (SE ABRE CON E O TAB)
